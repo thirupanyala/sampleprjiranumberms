@@ -1,0 +1,81 @@
+name: Release Branch Notification
+
+on:
+  create:
+    branches:
+      - release/* # Trigger workflow when a release branch is created
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # Step 2: Fetch and process emails from PR commits
+      - name: Fetch and process PR commit emails
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Fetch merged pull requests into main branch
+          prs=$(gh pr list --state merged --base main --json number)
+          
+          # Initialize an empty recipients list
+          recipients=""
+
+          # Ensure prs is not empty
+          if [[ -z "$prs" || "$prs" == "[]" ]]; then
+             echo "No merged pull requests found."
+             exit 0
+          fi
+
+          echo "PRS : $prs"
+
+          # Loop through each merged PR
+           for pr in $(echo "$prs" | jq -c '.[]'); do
+          # echo "$prs" | jq -c '.[]' | while read -r pr; do
+            pr_number=$(echo "$pr" | jq -r '.number')
+            
+            # Fetch commits for the PR
+            commits=$(gh pr view "$pr_number" --json commits | jq -c '.[]')
+            echo "COMMITS : $commits"
+
+           # Avoid subshell by using a `for` loop instead of `while`
+            # echo "$commits" | jq -c '.[]' | while read -r commit; do
+            # for commit in $(echo "$commits" | jq -c '.[]'); do
+             for commit in $(echo "$commits" | jq -r '.[] | @base64'); do
+              
+              # Decode commit details
+                commit_decoded=$(echo "$commit" | base64 --decode)
+                echo "commit_decoded : $commit_decoded"
+              
+              # echo "COMMIT : $commit"
+              # Extract email from within each commit
+               commit_authors=$(echo "$commit_decoded" | jq -r '.authors')
+               commit_email=$(echo "$commit_decoded" | jq -r '.authors[0].email')
+               echo "commit_email : $commit_email"
+
+          # Append the email to the recipients list (avoid duplicates)
+            if [[ -n "$commit_email" && ! ",$recipients," == *",$commit_email,"* ]]; then
+                if [ -z "$recipients" ]; then
+                  recipients="$commit_email"
+                  echo " if recipients : $recipients"
+                else
+                  recipients="$recipients,$commit_email"
+                  echo " else recipients : $recipients"
+                fi
+            fi
+             echo "RECIPIENTS-1 : $recipients" 
+            done
+            echo "RECIPIENTS-2 : $recipients" 
+          done
+
+          # Save the recipients list to an environment variable
+          echo "RECIPIENTS-3 : $recipients" 
+          echo "RECIPIENTS=$recipients" >> $GITHUB_ENV
